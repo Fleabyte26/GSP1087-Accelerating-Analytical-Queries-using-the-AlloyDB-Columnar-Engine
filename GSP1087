@@ -1,0 +1,51 @@
+# GSP1087 – Accelerating Analytical Queries using the AlloyDB Columnar Engine
+Paste each block into Cloud Shell, in the same tab. Use the copy button.
+## 1. Setup
+
+Wait until lab-instance shows Ready on the AlloyDB page, then:
+
+```bash
+export ALLOYDB=$(gcloud alloydb instances list --filter="name~lab-instance" --format="value(ipAddress)" | head -1)
+export VM_ZONE=$(gcloud compute instances list --filter="name=alloydb-client" --format="value(zone.basename())")
+echo $ALLOYDB $VM_ZONE
+```
+
+## 2. Task 1: baseline dataset (3–5 min)
+
+```bash
+gcloud compute ssh alloydb-client --zone=$VM_ZONE --quiet --command="echo $ALLOYDB > alloydbip.txt; export PGPASSWORD=Change3Me; pgbench -h $ALLOYDB -U postgres -i -s 500 -F 90 -n postgres; psql -h $ALLOYDB -U postgres -c 'select count(*) from pgbench_accounts;'"
+```
+
+Expect a count of 50000000.
+
+Check my progress: Create a baseline data set
+
+## 3. Task 2: baseline test
+
+```bash
+cat > baseline.sql <<'SQL'
+\timing on
+SELECT aid, bid, abalance FROM pgbench_accounts WHERE bid < 189 OR abalance > 100 LIMIT 20;
+EXPLAIN (ANALYZE,COSTS,SETTINGS,BUFFERS,TIMING,SUMMARY,WAL,VERBOSE) SELECT count(*) FROM pgbench_accounts WHERE bid < 189 OR abalance > 100;
+SQL
+gcloud compute ssh alloydb-client --zone=$VM_ZONE --quiet --command="PGPASSWORD=Change3Me psql -h $ALLOYDB -U postgres -P pager=off" < baseline.sql | grep -E "Execution Time|Planning Time|ERROR"
+```
+
+Note the Execution Time (around 10,000 ms).
+
+## 4. Tasks 3–5: enable and test the Columnar Engine
+
+```bash
+cat > columnar.sql <<'SQL'
+SHOW google_columnar_engine.enabled;
+CREATE EXTENSION IF NOT EXISTS google_columnar_engine;
+SELECT google_columnar_engine_add('pgbench_accounts');
+EXPLAIN (ANALYZE,COSTS,SETTINGS,BUFFERS,TIMING,SUMMARY,WAL,VERBOSE) SELECT count(*) FROM pgbench_accounts WHERE bid < 189 OR abalance > 100;
+SQL
+gcloud compute ssh alloydb-client --zone=$VM_ZONE --quiet --command="PGPASSWORD=Change3Me psql -h $ALLOYDB -U postgres -P pager=off" < columnar.sql | grep -E "^ on|google_columnar|Columnar|Execution Time|ERROR"
+```
+
+Expect `on`, a Columnar Scan, and an Execution Time under 100 ms.
+
+Check my progress: Testing the Columnar Engine
+
